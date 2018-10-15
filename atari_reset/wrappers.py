@@ -56,8 +56,11 @@ class VecFrameStack(MyWrapper):
         self.nstack = nstack
         wos = venv.observation_space # wrapped ob space
         low = np.repeat(wos.low, self.nstack, axis=-1)
+        print("LOW", low.shape)
         high = np.repeat(wos.high, self.nstack, axis=-1)
         self.stackedobs = np.zeros((venv.num_envs,)+low.shape, low.dtype)
+        #import ipdb; ipdb.set_trace()
+        print("HELLPPP", self.stackedobs.shape)
         self._observation_space = spaces.Box(low=low, high=high)
         self._action_space = venv.action_space
     def step(self, vac):
@@ -68,6 +71,7 @@ class VecFrameStack(MyWrapper):
         """
         obs, rews, news, infos = self.venv.step(vac)
         self.stackedobs = np.roll(self.stackedobs, shift=-1, axis=-1)
+        print(self.stackedobs.shape)
         for (i, new) in enumerate(news):
             if new:
                 self.stackedobs[i] = 0
@@ -203,8 +207,9 @@ class MaxAndSkipEnv(MyWrapper):
         """Return only every `skip`-th frame"""
         MyWrapper.__init__(self, env)
         # most recent raw observations (for max pooling across time steps)
+        #import ipdb; ipdb.set_trace()
         self._obs_buffer = deque(maxlen=2)
-        self._skip       = skip
+        self._skip = skip
 
     def step(self, action):
         """Repeat action, sum reward, and max over last observations."""
@@ -324,7 +329,6 @@ class MyResizeFrame(MyWrapper):
         MyWrapper.__init__(self, env)
         self.res = (105, 80, 3)
         self.observation_space = Box(low=0, high=255, shape=self.res, dtype = np.uint8)
-
     def reshape_obs(self, obs):
         obs = np.array(Image.fromarray(obs).resize((self.res[0],self.res[1]),
                                                    resample=Image.BILINEAR), dtype=np.uint8)
@@ -336,6 +340,9 @@ class MyResizeFrame(MyWrapper):
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
         return self.reshape_obs(obs), reward, done, info
+
+    def set_nenvs(self,nenvs):
+        self.num_envs = nenvs
 
 class FireResetEnv(MyWrapper):
     def __init__(self, env):
@@ -385,7 +392,9 @@ def my_wrapper(env, clip_rewards=True):
     env = MaxAndSkipEnv(env, skip=4)
     if 'Pong' in env.spec.id:
         env = FireResetEnv(env)
+    print("BEFORE", env.observation_space)
     env = MyResizeFrame(env)
+    print("AFTER", env.observation_space)
     return env
 
 class ResetManager(MyWrapper):

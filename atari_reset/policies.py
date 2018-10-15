@@ -127,12 +127,16 @@ class GRUPolicy(object):
 
         # use variables instead of placeholder to keep data on GPU if we're training
         X = tf.placeholder(tf.uint8, ob_shape)  # obs
+        #print("OBSERVATION SHAPE", X.shape)
         M = tf.placeholder(tf.float32, [nbatch])  # mask (done t-1)
         S = tf.placeholder(tf.float32, [nenv, memsize])  # states
         E = tf.placeholder(tf.uint8, [nbatch])
 
         with tf.variable_scope("model", reuse=reuse):
             h = tf.nn.relu(conv(tf.cast(X, tf.float32)/255., 'c1', noutchannels=64, filtsize=8, stride=4))
+            variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='model/c1')
+            #print("VARIABLES", variables)
+            #print("C! SHAPE", h.shape)
             h2 = tf.nn.relu(conv(h, 'c2', noutchannels=128, filtsize=4, stride=2))
             h3 = tf.nn.relu(conv(h2, 'c3', noutchannels=128, filtsize=3, stride=1))
             h3 = to2d(h3)
@@ -159,7 +163,10 @@ class GRUPolicy(object):
         self.initial_state = np.zeros((nenv, memsize), dtype=np.float32)
 
         def step(ob, state, mask, increase_ent):
-            return sess.run([a0, vf, snew, neglogp0], {X:ob, S:state, M:mask, E:increase_ent})
+            _a0, _vf, _snew, _neglogp0, _pi = sess.run([a0, vf, snew, neglogp0, pi], {X:ob, S:state, M:mask, E:increase_ent})
+            #print("pi", _pi)
+            return [_a0, _vf, _snew, _neglogp0, _pi]
+
 
         def value(ob, state, mask):
             return sess.run(vf, {X:ob, S:state, M:mask})

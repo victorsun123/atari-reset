@@ -31,8 +31,8 @@ def test(game_name, num_timesteps, policy, load_path, save_path, noops=False, st
             env = gym.make(game_name + 'NoFrameskip-v4')
             env = bench.Monitor(env, "{}.monitor.json".format(rank))
             if rank%nenvs == 0 and hvd.local_rank()==0:
-                os.makedirs('results/' + game_name, exist_ok=True)
-                videofile_prefix = 'results/' + game_name
+                os.makedirs(save_path + '/' + game_name, exist_ok=True)
+                videofile_prefix = save_path + '/' + game_name
                 env = VideoWriter(env, videofile_prefix)
             if noops:
                 env = NoopResetEnv(env)
@@ -41,11 +41,15 @@ def test(game_name, num_timesteps, policy, load_path, save_path, noops=False, st
             env = my_wrapper(env, clip_rewards=True)
             if epsgreedy:
                 env = EpsGreedyEnv(env)
+            print("MAKE ENV", env.observation_space)
             return env
+
         return env_fn
 
+    #import ipdb; ipdb.set_trace()
     nenvs = 8
     env = SubprocVecEnv([make_env(i + nenvs * hvd.rank()) for i in range(nenvs)])
+    print("SUBPROC", env.observation_space)
     env = VecFrameStack(env, 4)
 
     policy = {'cnn' : CnnPolicy, 'gru': GRUPolicy}[policy]

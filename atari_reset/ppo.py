@@ -1,7 +1,8 @@
 '''
 Proximal policy optimization with a few tricks. Adapted from the implementation in baselines.
 '''
-
+import pickle
+import pathlib
 import os.path as osp
 import time
 import joblib
@@ -18,8 +19,9 @@ from baselines.common.mpi_moments import mpi_moments
 
 class Model(object):
     def __init__(self, policy, ob_space, ac_space, nenv, nsteps, ent_coef, vf_coef, l2_coef,
-                 cliprange, adam_epsilon=1e-6, load_path=None, test_mode=False):
-        sess = tf.get_default_session()
+                 cliprange, adam_epsilon=1e-6, load_path=None, test_mode=False,sess = None):
+        if not sess:
+            sess = tf.get_default_session()
 
         act_model = policy(sess, ob_space, ac_space, nenv, 1, test_mode=test_mode, reuse=False)
         train_model = policy(sess, ob_space, ac_space, nenv, nsteps, test_mode=test_mode, reuse=True)
@@ -71,9 +73,14 @@ class Model(object):
         def load(load_path):
             loaded_params = joblib.load(load_path)
             restores = []
+            print(params)
+            print(loaded_params)
             for p, loaded_p in zip(params, loaded_params):
                 restores.append(p.assign(loaded_p))
             sess.run(restores)
+
+        def get_last_conv_layer():
+            return act_model.h3
 
         self.train = train
         self.train_model = train_model
@@ -83,6 +90,7 @@ class Model(object):
         self.initial_state = act_model.initial_state
         self.save = save
         self.load = load
+        self.get_last_conv_layer = get_last_conv_layer
         sess.run(tf.global_variables_initializer())
         if load_path and hvd.rank()==0:
             self.load(load_path)
@@ -119,15 +127,29 @@ class Runner(object):
             mb_dones, mb_neglogpacs, mb_states = self.mb_stuff
         epinfos = []
         while len(mb_rewards) < self.nsteps+self.num_steps_to_cut_left+self.num_steps_to_cut_right:
-            actions, values, states, neglogpacs = self.model.step(mb_obs[-1], mb_states[-1], mb_dones[-1], mb_increase_ent[-1])
+            print('obs', mb_obs[-1])
+            print('state', mb_states[-1])
+            print('done', mb_dones[-1])
+            print('entropoy', mb_increase_ent[-1])
+            #print('obs, state, done, increase_entropy', mb_obs[-1], mb_states[-1], mb_dones[-1], mb_increase_ent[-1])
+            actions, values, states, neglogpacs, pi = self.model.step(mb_obs[-1], mb_states[-1], mb_dones[-1], mb_increase_ent[-1])
             mb_actions.append(actions)
             mb_values.append(values)
             mb_states.append(states)
             mb_neglogpacs.append(neglogpacs)
-
+            print('ACTION', actions)
+            print('VALUE', values)
+            print('STATES', states)
+            print('neglogpacs', neglogpacs)
             obs, rewards, dones, infos = self.env.step(actions)
+            
+            print('DONE',dones)
+            print('INFO',infos)
+            print('increase entropy', [info.get('increase_entropy', False) for info in infos])
+
             mb_obs.append(np.cast[self.model.train_model.X.dtype.name](obs))
             mb_increase_ent.append(np.asarray([info.get('increase_entropy', False) for info in infos], dtype=np.uint8))
+
             mb_rewards.append(rewards)
             mb_dones.append(dones)
             mb_valids.append([(not info.get('replay_reset.invalid_transition', False)) for info in infos])
@@ -136,6 +158,7 @@ class Runner(object):
             for info in infos:
                 maybeepinfo = info.get('episode')
                 if maybeepinfo: epinfos.append(maybeepinfo)
+
 
         # GAE
         mb_advs = [np.zeros_like(mb_values[0])] * (len(mb_rewards) + 1)
@@ -170,7 +193,7 @@ class Runner(object):
 
         # obs, increase_ent, advantages, masks, actions, values, neglogpacs, valids, returns, states, epinfos = runner.run()
         return (*map(sf01, (ar_mb_obs, ar_mb_ent, ar_mb_advs, ar_mb_dones, ar_mb_actions, ar_mb_values, ar_mb_neglogpacs, ar_mb_valids, ar_mb_rets)),
-            mb_states[0], epinfos)
+            mb_states, epinfos)
 
 def sf01(arr):
     """
@@ -186,9 +209,12 @@ def learn(policy, env, nsteps, total_timesteps, ent_coef=1e-4, lr=1e-4,
             load_path=None, save_path='results', game_name='', test_mode=False):
     nenvs = env.num_envs
     ob_space = env.observation_space
+    print("OBSPACE", ob_space)
     ac_space = env.action_space
     nbatch = nenvs * nsteps
     nsteps_train = nsteps + nsteps // 2
+
+    pathlib.Path(save_path + '/hidden_states').mkdir(parents =True, exist_ok=True)
 
     model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nenv=nenvs, nsteps=nsteps_train, ent_coef=ent_coef,
                   vf_coef=vf_coef, l2_coef=l2_coef, cliprange=cliprange, load_path=load_path, test_mode=test_mode)
@@ -205,6 +231,8 @@ def learn(policy, env, nsteps, total_timesteps, ent_coef=1e-4, lr=1e-4,
 
         obs, increase_ent, advantages, masks, actions, values, neglogpacs, valids, returns, states, epinfos = runner.run()
 
+        with open(save_path + '/hidden_states/episode_{}.pkl'.format(update), 'wb') as f:
+            pickle.dump(states, f)
         if hvd.size()>1:
             epinfos = flatten_lists(MPI.COMM_WORLD.allgather(epinfos))
 
